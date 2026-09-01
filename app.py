@@ -12,16 +12,12 @@ import os
 from datetime import datetime, timedelta
 import textwrap
 
-current_dir = os.path.dirname(__file__)
-DIR = "/Users/KateMunkacsy/Desktop/CREATE/spectrometer_data/"
-
 #%% ====================================================================
 # 1. LOAD DATA
 # ======================================================================
 
-benz   = pd.read_excel(f"{DIR}/data/input/benzene results.xlsx")
-naphth = pd.read_excel(f"{DIR}/data/input/naphthalene results.xlsx")
-
+benz   = pd.read_excel("data/benzene results.xlsx")
+naphth = pd.read_excel("data/naphthalene results.xlsx")
 
 
 #%% ====================================================================
@@ -212,6 +208,12 @@ def summarize_events(hr, none_list, df, benz_lvl, naph_lvl):
         'detect.naphthalene': ['sum'],
         'ug/m3.benzene': ['mean', 'min', 'max'],
         'ug/m3.naphthalene': ['mean', 'min', 'max'],
+        'strength.benzene': ['min'], 
+        'strength.naphthalene': ['min'], 
+        'integration time.benzene': ['min', 'max'], 
+        'integration time.naphthalene': ['min', 'max'], 
+        'benzene.rsq': ['min'], 
+        'naphthalene.rsq': ['min'], 
         f'benz_gt{benz_lvl}': ['sum'],
         f'naph_gt{naph_lvl}': ['sum']})
     agg_detect.columns = ['_'.join(col) for col in agg_detect.columns.to_flat_index()]
@@ -255,6 +257,7 @@ tab_selected_style = {
 }
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.MORPH])
+server = app.server
 color_mode_switch =  html.Span(
     [
         dbc.Label(className="fa fa-moon", html_for="switch"),
@@ -271,7 +274,7 @@ app.layout = dbc.Container([
         dcc.Tab(label='V1', style=tab_style, selected_style=tab_selected_style, children=[
             ## =========================== start of V1 tab content
             dbc.Row([
-            # Menu of criteria controls
+            # Menu of criteria controls - 
                 dbc.Col([
                     html.H3("Benzene"),
                     dbc.Row([
@@ -425,15 +428,69 @@ app.layout = dbc.Container([
         dcc.Tab(label='V2', style=tab_style, selected_style=tab_selected_style, children=[
             ## =========================== start of V2 tab content
             dbc.Row([
-            # Menu of criteria controls
+            # Menu of criteria controls - 
                 dbc.Col([
                     dbc.Row([
                         dbc.Col([
                             html.H5("Set Criteria"),
-                            html.Div('Benzene: at least one detection >= ug/m3 level'),
+                            html.H6("Benzene"),
+                            html.Div('At least one detection >= ug/m3 level'),
                             dcc.Input(id='benz_lvl_thresh', type="number", value=100, debounce=True),
-                            html.Div('Naphthalene: at least one detection >= ug/m3 level'),
+                            html.Div('Strength Threshold'),
+                            dcc.Slider(
+                                merged_df['strength.benzene'].min(), merged_df['strength.benzene'].max(),
+                                value=merged_df['strength.benzene'].min(),
+                                id='benz-strength-slider-2'
+                            ),
+                            html.Div('Integration Time Threshold'),
+                            dcc.RangeSlider(
+                                id='benz-intg-slider-2',
+                                min=merged_df['integration time.benzene'].min(),
+                                max=merged_df['integration time.benzene'].max(),
+                                value=[merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max()],
+                                marks=None,
+                                tooltip={"placement": "bottom", "always_visible": False} # Optional floating value labels
+                            ),
+                            # dcc.Slider(
+                            #     merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max(),
+                            #     value=merged_df['integration time.benzene'].min(),
+                            #     id='benz-intg-slider-2'
+                            # ),
+                            html.Div('R-squared Threshold'),
+                            dcc.Slider(
+                                merged_df['benzene.rsq'].min(), merged_df['benzene.rsq'].max(),
+                                value=merged_df['benzene.rsq'].min(),
+                                id='benz-rsq-slider-2'
+                            ),
+                            html.H6("Naphthalene"),
+                            html.Div('At least one detection >= ug/m3 level'),
                             dcc.Input(id='naph_lvl_thresh', type="number", value=100, debounce=True),
+                            html.Div('Strength Threshold'),
+                            dcc.Slider(
+                                merged_df['strength.naphthalene'].min(), merged_df['strength.naphthalene'].max(),
+                                value=merged_df['strength.naphthalene'].min(),
+                                id='naph-strength-slider-2'
+                            ),
+                            html.Div('Integration Time Threshold'),
+                            dcc.RangeSlider(
+                                id='naph-intg-slider-2',
+                                min=merged_df['integration time.naphthalene'].min(),
+                                max=merged_df['integration time.naphthalene'].max(),
+                                value=[merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max()],
+                                marks=None,
+                                tooltip={"placement": "bottom", "always_visible": False} # Optional floating value labels
+                            ),
+                            # dcc.Slider(
+                            #     merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max(),
+                            #     value=merged_df['integration time.naphthalene'].min(),
+                            #     id='naph-intg-slider-2'
+                            # ),
+                            html.Div('R-Squared Threshold'),
+                            dcc.Slider(
+                                merged_df['naphthalene.rsq'].min(), merged_df['naphthalene.rsq'].max(),
+                                value=merged_df['naphthalene.rsq'].min(),
+                                id='naph-rsq-slider-2'
+                            ),
                             html.Div('---'),
                             html.Div([
                                 daq.ToggleSwitch(
@@ -452,7 +509,7 @@ app.layout = dbc.Container([
                                 inline=True,
                                 id='detect-preference'
                             ),
-                        ]),
+                        ], style={"padding-left": "50px", "padding-right": "50px"}),
                     ]),
                 ], width=4, className="shadow-sm p-3 mb-5 bg-white rounded"),
                 dbc.Col([
@@ -735,12 +792,22 @@ def update_data(period, ben_detect, ben_strength, ben_int_time, ben_r_sq, ben_le
 ## === Callbacks & functions for tab V2 ===========================================
 @callback(
     Output('naph_lvl_thresh', 'value'),
+    Output('naph-strength-slider-2', 'value'),
+    Output('naph-intg-slider-2', 'value'),
+    Output('naph-rsq-slider-2', 'value'),
     Input('sync-check-2', 'value'),
     Input('benz_lvl_thresh', 'value'),
+    Input('benz-strength-slider-2', 'value'),
+    Input('benz-intg-slider-2', 'value'),
+    Input('benz-rsq-slider-2', 'value'),
 )
-def sync_criteria(sync_check, benz_lvl_thresh):
+def sync_criteria(sync_check, benz_lvl_thresh, benz_str, benz_intg, benz_rsq):
     if sync_check:
-        return benz_lvl_thresh
+        naph_lvl_thresh = benz_lvl_thresh
+        naph_str = benz_str
+        naph_intg = benz_intg
+        naph_rsq = benz_rsq
+        return naph_lvl_thresh, naph_str, naph_intg, naph_rsq
     return no_update
 
 @callback(
@@ -749,11 +816,17 @@ def sync_criteria(sync_check, benz_lvl_thresh):
     Input('detect-preference', 'value'),
     Input('no-detect-span', 'value'),
     Input('benz_lvl_thresh', 'value'),
+    Input('benz-strength-slider-2', 'value'),
+    Input('benz-intg-slider-2', 'value'),
+    Input('benz-rsq-slider-2', 'value'),
     Input('naph_lvl_thresh', 'value'),
+    Input('naph-strength-slider-2', 'value'),
+    Input('naph-intg-slider-2', 'value'),
+    Input('naph-rsq-slider-2', 'value'),
     Input('period-dropdown-2', 'value'),
     Input('sample-period-dropdown', 'value'),
 )
-def update_data(pref, no_span, benz_lvl, naph_lvl, period, sample_period):
+def update_data(pref, no_span, benz_lvl, benz_str, benz_int, benz_rsq, naph_lvl, naph_str, naph_int, naph_rsq, period, sample_period):
 
     df = merged_df.copy()
     df['benz_detection_block'] = (df["detect.benzene"] != df["detect.benzene"].shift()).cumsum()
@@ -783,14 +856,39 @@ def update_data(pref, no_span, benz_lvl, naph_lvl, period, sample_period):
         agg_df = summarize_events(hr=hr, none_list=none_list, df=df, benz_lvl=benz_lvl, naph_lvl=naph_lvl)
         all_dfs = pd.concat([all_dfs, agg_df])
 
-    if pref == "Either criteria":
-        match_df = all_dfs[(all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1) | (all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1)].copy()
+    if pref == "Either criteria": 
+        match_df = all_dfs[((all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1) & 
+                            (all_dfs['strength.benzene_min'] >= benz_str) & 
+                            ((all_dfs['integration time.benzene_min'] >= benz_int[0]) & (all_dfs['integration time.benzene_max'] <= benz_int[1])) & 
+                            (all_dfs['benzene.rsq_min'] >= benz_rsq)) | 
+                            ((all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1) & 
+                             (all_dfs['strength.naphthalene_min'] >= naph_str) & 
+                             ((all_dfs['integration time.naphthalene_min'] >= naph_int[0]) & (all_dfs['integration time.naphthalene_max'] <= naph_int[1])) & 
+                             (all_dfs['naphthalene.rsq_min'] >= naph_rsq))
+                        ].copy()
+        
     elif pref == "At least benzene criteria":
-        match_df = all_dfs[(all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1)].copy()
+        match_df = all_dfs[((all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1) & 
+                            (all_dfs['strength.benzene_min'] >= benz_str) & 
+                            ((all_dfs['integration time.benzene_min'] >= benz_int[0]) & (all_dfs['integration time.benzene_max'] <= benz_int[1])) & 
+                            (all_dfs['benzene.rsq_min'] >= benz_rsq))].copy()
+        
     elif pref == "At least naphthalene criteria":
-        match_df = all_dfs[(all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1)].copy()
+        match_df = all_dfs[((all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1) & 
+                             (all_dfs['strength.naphthalene_min'] >= naph_str) & 
+                             ((all_dfs['integration time.naphthalene_min'] >= naph_int[0]) & (all_dfs['integration time.naphthalene_max'] <= naph_int[1])) & 
+                             (all_dfs['naphthalene.rsq_min'] >= naph_rsq))].copy()
+        
     elif pref == "Both criteria":
-        match_df = all_dfs[(all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1) & (all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1)].copy()
+        match_df = all_dfs[((all_dfs[f'benz_gt{benz_lvl}_sum'] >= 1) & 
+                                    (all_dfs['strength.benzene_min'] >= benz_str) & 
+                                    ((all_dfs['integration time.benzene_min'] >= benz_int[0]) & (all_dfs['integration time.benzene_max'] <= benz_int[1])) & 
+                                    (all_dfs['benzene.rsq_min'] >= benz_rsq)) & 
+                                    ((all_dfs[f'naph_gt{naph_lvl}_sum'] >= 1) & 
+                                     (all_dfs['strength.naphthalene_min'] >= naph_str) & 
+                                     ((all_dfs['integration time.naphthalene_min'] >= naph_int[0]) & (all_dfs['integration time.naphthalene_max'] <= naph_int[1])) & 
+                                     (all_dfs['naphthalene.rsq_min'] >= naph_rsq))
+                                ].copy()
 
     period_n_cnt = match_df.groupby(['period', 'timeframe'])['datetime_min'].count()
     period_n_cnt = pd.DataFrame(period_n_cnt).reset_index()
@@ -852,6 +950,6 @@ def update_graph(cell_clicked, period, pre_time, post_time):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run_server(debug=False)
 
 # %%
