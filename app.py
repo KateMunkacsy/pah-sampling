@@ -950,7 +950,7 @@ def update_graph(cell_clicked, period, pre_time, post_time):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8050))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
 
 # %%
