@@ -1,4 +1,4 @@
-from dash import Dash, html, dcc, callback, Output, Input, no_update, dash_table
+from dash import Dash, html, dcc, callback, Output, Input, no_update, dash_table, clientside_callback
 import dash_bootstrap_components as dbc
 import dash_daq as daq
 import dash_ag_grid as dag
@@ -21,13 +21,12 @@ naphth = pd.read_excel("data/naphthalene results.xlsx")
 
 
 #%% ====================================================================
-# 2. Prep Data
+# 2. PREP DATA
 # ======================================================================
 
+## - combine datasets
 benz['datetime']   = pd.to_datetime(benz['date'].astype(str) + ' ' + benz['time'].astype(str))
 naphth['datetime'] = pd.to_datetime(naphth['date'].astype(str) + ' ' + naphth['time'].astype(str))
-
-## - combine datasets
 merged_df = benz.merge(naphth, how='outer', on=['datetime', 'date', 'time'], suffixes=('.benzene', '.naphthalene'))
 
 ## - construct time variables
@@ -50,21 +49,22 @@ val = ["Nov 2021 - Oct 2022",
        "Nov 2025 - May 2026"]
 merged_df['period'] = np.select(cond, val, default="July 2021 - Oct 2021")
 
-## - categorize the readings into levels
-cond = [merged_df['ug/m3.benzene'] < 50,
-        merged_df['ug/m3.benzene'].between(50, 100),
-        merged_df['ug/m3.benzene'].between(100, 200),
-        merged_df['ug/m3.benzene'] > 200]
-val = ['<50 ug/m3', '50-100 ug/m3', '100-200 ug/m3', '>200 ug/m3']
-merged_df['benzene_level'] = np.select(cond, val, default=None)
+# ## - categorize the readings into levels
+# cond = [merged_df['ug/m3.benzene'] < 50,
+#         merged_df['ug/m3.benzene'].between(50, 100),
+#         merged_df['ug/m3.benzene'].between(100, 200),
+#         merged_df['ug/m3.benzene'] > 200]
+# val = ['<50 ug/m3', '50-100 ug/m3', '100-200 ug/m3', '>200 ug/m3']
+# merged_df['benzene_level'] = np.select(cond, val, default=None)
 
-cond = [merged_df['ug/m3.naphthalene'] < 20,
-        merged_df['ug/m3.naphthalene'].between(20, 40),
-        merged_df['ug/m3.naphthalene'].between(40, 60),
-        merged_df['ug/m3.naphthalene'] > 60]
-val = ['<20 ug/m3', '20-40 ug/m3', '40-60 ug/m3', '>60 ug/m3']
-merged_df['naphthalene_level'] = np.select(cond, val, default=None)
+# cond = [merged_df['ug/m3.naphthalene'] < 20,
+#         merged_df['ug/m3.naphthalene'].between(20, 40),
+#         merged_df['ug/m3.naphthalene'].between(40, 60),
+#         merged_df['ug/m3.naphthalene'] > 60]
+# val = ['<20 ug/m3', '20-40 ug/m3', '40-60 ug/m3', '>60 ug/m3']
+# merged_df['naphthalene_level'] = np.select(cond, val, default=None)
 
+## - variable renaming dictionaries for clearer naming in tables
 benz_rename = {'benz_criteria_start_':'Start', 'benz_criteria_end_':'End', 'benz_criteria_duration_':'Duration',
                 'ug/m3.benzene_count':'Number of benzene readings',
                 'ug/m3.benzene_min': 'Min benzene level (ug/m3)', 
@@ -97,6 +97,8 @@ naph_rename = {'naph_criteria_start_':'Start', 'naph_criteria_end_':'End', 'naph
                 'naphthalene.rsq_mean': 'Mean R-sq',
                 'meets_benzene_criteria_and_span_max': 'Benzene event', 
                 'meets_benzene_criteria_max': 'Almost benzene event'}
+
+## - table column names
 benz_tbl_cols = list(benz_rename.values())
 naph_tbl_cols = list(naph_rename.values())
 sum_cols = [
@@ -186,6 +188,10 @@ event_tbl_cols = [
     },
 ]
 
+## - sampling period options (hours)
+sample_periods = [1, 2, 4, 8, 12, 24]
+
+## - function for summarizing event details based on sampling period
 def summarize_events(hr, none_list, df, benz_lvl, naph_lvl):
     target_dts = list(none_list)
     df = df.sort_values('datetime')
@@ -226,19 +232,12 @@ def summarize_events(hr, none_list, df, benz_lvl, naph_lvl):
 
     return agg_detect
 
-PLACES = {
-    "New York": {"lat": 40.7128, "lon": -74.0060},
-    "London": {"lat": 51.5074, "lon": -0.1278},
-    "Tokyo": {"lat": 35.6762, "lon": 139.6503},
-    "Sydney": {"lat": -33.8688, "lon": 151.2093},
-    "Cape Town": {"lat": -33.9249, "lon": 18.4241},
-}
-
-
 
 #%% ====================================================================
-# 4. App layout
+# 3. APP LAYOUT
 # ======================================================================
+
+## - Styling for tabs in app
 tabs_styles = {
     'height': '44px'
 }
@@ -256,6 +255,7 @@ tab_selected_style = {
     'padding': '6px'
 }
 
+## - Initialize app
 app = Dash(__name__, external_stylesheets=[dbc.themes.MORPH])
 server = app.server
 color_mode_switch =  html.Span(
@@ -266,257 +266,353 @@ color_mode_switch =  html.Span(
     ]
 )
 
+## - Design app layout components
 app.layout = dbc.Container([
+    ## - Header -----------------------------------------------------------------------------------------------
     dbc.Row([
         dbc.Col(html.H1("Spectrometer Data - Event Exploration", className="text-center mt-2 mb-2"), width=12)
     ], style={"height": "8vh"}),
-    dcc.Tabs([
-        dcc.Tab(label='V1', style=tab_style, selected_style=tab_selected_style, children=[
-            ## =========================== start of V1 tab content
-            dbc.Row([
-            # Menu of criteria controls - 
-                dbc.Col([
-                    html.H3("Benzene"),
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div('Detected'),
-                            dcc.RadioItems(
-                                options=[True, False],
-                                value=True,
-                                inline=True,
-                                id='radio-benz-detect'
-                            ),
-                            html.Div('Minimum ug/m3 level'),
-                            dcc.Input(id='benz-level', type="number", value=100, debounce=True),
-                            html.Div('Span of time at target level (in minutes)'),
-                            dcc.Input(id='benz-span', type="number", value=5, debounce=True),
 
-                        ]),
-                        dbc.Col([
-                            html.Div('Strength Threshold'),
-                            dcc.Slider(
-                                merged_df['strength.benzene'].min(), merged_df['strength.benzene'].max(),
-                                value=merged_df['strength.benzene'].min(),
-                                id='benz-strength-slider'
-                            ),
-                            html.Div('Integration Time Threshold'),
-                            dcc.Slider(
-                                merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max(),
-                                value=merged_df['integration time.benzene'].min(),
-                                id='benz-intg-slider'
-                            ),
-                            html.Div('R-squared Threshold'),
-                            dcc.Slider(
-                                merged_df['benzene.rsq'].min(), merged_df['benzene.rsq'].max(),
-                                value=merged_df['benzene.rsq'].min(),
-                                id='benz-rsq-slider'
-                            ),
-                        ]),
-                    ]),
-                ], width=5, className="shadow-sm p-3 mb-5 bg-white rounded"),
-                dbc.Col([
-                    html.H3("Naphthalene"),
-                    dbc.Row([
-                        dbc.Col([
-                            html.Div('Detected'),
-                            dcc.RadioItems(
-                                options=[True, False],
-                                value=True,
-                                inline=True,
-                                id='radio-naph-detect'
-                            ),
-                            html.Div('Minimum ug/m3 level'),
-                            dcc.Input(id='naph-level', type="number", value=100, debounce=True),
-                            html.Div('Span of time at target level (in minutes)'),
-                            dcc.Input(id='naph-span', type="number", value=5, debounce=True),
-                        ]),
-                        dbc.Col([
-                            html.Div('Strength Threshold'),
-                            dcc.Slider(
-                                merged_df['strength.naphthalene'].min(), merged_df['strength.naphthalene'].max(),
-                                value=merged_df['strength.naphthalene'].min(),
-                                id='naph-strength-slider'
-                            ),
-                            html.Div('Integration Time Threshold'),
-                            dcc.Slider(
-                                merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max(),
-                                value=merged_df['integration time.naphthalene'].min(),
-                                id='naph-intg-slider'
-                            ),
-                            html.Div('R-Squared Threshold'),
-                            dcc.Slider(
-                                merged_df['naphthalene.rsq'].min(), merged_df['naphthalene.rsq'].max(),
-                                value=merged_df['naphthalene.rsq'].min(),
-                                id='naph-rsq-slider'
-                            ),
-                        ]),
-                    ]),
-                ], width=5, className="shadow-sm p-3 mb-5 bg-white rounded"),
-                dbc.Col([
-                    html.Div('Preferred level of criteria met'),
-                    dcc.Dropdown(
-                        id='criteria-preference',
-                        options=["Both", "At least one", "At least Benzene", "At least Naphthalene"],
-                        value="Both",
-                        clearable=True,
-                        multi=False
-                    ),
-                    html.Div('---'),
-                    html.Div([
-                        daq.ToggleSwitch(
-                            id='sync-check',
-                            value=False,
-                            label='Sync naphthalene criteria with benzene criteria',
-                            labelPosition='top',
-                            size=40,
-                            theme='dark'
-                        ),
-                            ]),
-                ], width=2, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ], className="g-3"),
-            dbc.Row([
-                dbc.Col([
-                    html.H5("Number of Events by Time Period"),
-                    dag.AgGrid(
-                        id="sum-table",
-                        columnDefs=sum_cols,
-                        rowData=pd.DataFrame().to_dict("records"), 
-                        columnSize="sizeToFit",
-                        dashGridOptions={"resizable": True, "sortable": True}
-                    ),
-                ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ]),
-            dbc.Row([
-                dbc.Col([
-                    html.H5("Select Time Period"),
-                    dcc.Dropdown(
-                        id='period-dropdown',
-                        options=[{'label': prd, 'value': prd} for prd in merged_df['period'].unique()],
-                        value=merged_df['period'].unique()[-1],
-                        clearable=True,
-                        multi=False
-                    ),
-                    dcc.Graph(id='reading-graph'),
-                ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ]),
-            dbc.Row([
-                dbc.Col([
-                    html.H5("Benzene Events"),
-                    dag.AgGrid(
-                        id="benz-table",
-                        columnDefs=[{"field": i} for i in benz_tbl_cols],
-                        rowData=pd.DataFrame().to_dict("records"), 
-                        columnSize="autoSize",
-                        dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
-                    ),
-                ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ]),
-            dbc.Row([
-                dbc.Col([
-                    html.H5("Naphthalene Events"),
-                    dag.AgGrid(
-                        id="naph-table",
-                        columnDefs=[{"field": i} for i in naph_tbl_cols],
-                        rowData=pd.DataFrame().to_dict("records"), 
-                        columnSize="autoSize",
-                        dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
-                    ),
-                ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ]),
-            ## =========================== end of V1 tab content
-        ]),
+    dcc.Tabs([
+
+        ## ----------------------------------------------------------------------------------- start of V1 tab content
+        # dcc.Tab(label='V1', style=tab_style, selected_style=tab_selected_style, children=[
+        #     dbc.Row([
+
+        #         ## - Menu of criteria controls ----------------------------------------------
+        #         dbc.Col([
+
+        #             ## - Benzene criteria ---------------------------------------------------
+        #             html.H3("Benzene"),
+        #             dbc.Row([
+        #                 dbc.Col([
+        #                     html.Div('Detected'),
+        #                     dcc.RadioItems(
+        #                         options=[True, False],
+        #                         value=True,
+        #                         inline=True,
+        #                         id='radio-benz-detect'
+        #                     ),
+        #                     html.Div('Minimum ug/m3 level'),
+        #                     dcc.Input(id='benz-level', type="number", value=100, debounce=True),
+        #                     html.Div('Span of time at target level (in minutes)'),
+        #                     dcc.Input(id='benz-span', type="number", value=5, debounce=True),
+
+        #                 ]),
+        #                 dbc.Col([
+        #                     html.Div('Strength Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['strength.benzene'].min(), merged_df['strength.benzene'].max(),
+        #                         value=merged_df['strength.benzene'].min(),
+        #                         id='benz-strength-slider'
+        #                     ),
+        #                     html.Div('Integration Time Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max(),
+        #                         value=merged_df['integration time.benzene'].min(),
+        #                         id='benz-intg-slider'
+        #                     ),
+        #                     html.Div('R-squared Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['benzene.rsq'].min(), merged_df['benzene.rsq'].max(),
+        #                         value=merged_df['benzene.rsq'].min(),
+        #                         id='benz-rsq-slider'
+        #                     ),
+        #                 ]),
+        #             ]),
+        #         ], width=5, className="shadow-sm p-3 mb-5 bg-white rounded"),
+
+        #         ## - Naphthalene criteria ---------------------------------------------------
+        #         dbc.Col([
+        #             html.H3("Naphthalene"),
+        #             dbc.Row([
+        #                 dbc.Col([
+        #                     html.Div('Detected'),
+        #                     dcc.RadioItems(
+        #                         options=[True, False],
+        #                         value=True,
+        #                         inline=True,
+        #                         id='radio-naph-detect'
+        #                     ),
+        #                     html.Div('Minimum ug/m3 level'),
+        #                     dcc.Input(id='naph-level', type="number", value=100, debounce=True),
+        #                     html.Div('Span of time at target level (in minutes)'),
+        #                     dcc.Input(id='naph-span', type="number", value=5, debounce=True),
+        #                 ]),
+        #                 dbc.Col([
+        #                     html.Div('Strength Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['strength.naphthalene'].min(), merged_df['strength.naphthalene'].max(),
+        #                         value=merged_df['strength.naphthalene'].min(),
+        #                         id='naph-strength-slider'
+        #                     ),
+        #                     html.Div('Integration Time Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max(),
+        #                         value=merged_df['integration time.naphthalene'].min(),
+        #                         id='naph-intg-slider'
+        #                     ),
+        #                     html.Div('R-Squared Threshold'),
+        #                     dcc.Slider(
+        #                         merged_df['naphthalene.rsq'].min(), merged_df['naphthalene.rsq'].max(),
+        #                         value=merged_df['naphthalene.rsq'].min(),
+        #                         id='naph-rsq-slider'
+        #                     ),
+        #                 ]),
+        #             ]),
+        #         ], width=5, className="shadow-sm p-3 mb-5 bg-white rounded"),
+
+        #         ## - Combined settings ---------------------------------------------------
+        #         dbc.Col([
+        #             html.Div('Preferred level of criteria met'),
+        #             dcc.Dropdown(
+        #                 id='criteria-preference',
+        #                 options=["Both", "At least one", "At least Benzene", "At least Naphthalene"],
+        #                 value="Both",
+        #                 clearable=True,
+        #                 multi=False
+        #             ),
+        #             html.Div('---'),
+        #             html.Div([
+        #                 daq.ToggleSwitch(
+        #                     id='sync-check',
+        #                     value=False,
+        #                     label='Sync naphthalene criteria with benzene criteria',
+        #                     labelPosition='top',
+        #                     size=40,
+        #                     theme='dark'
+        #                 ),
+        #                     ]),
+        #         ], width=2, className="shadow-sm p-3 mb-5 bg-white rounded"),
+        #     ], className="g-3"),
+        #     dbc.Row([
+        #         dbc.Col([
+        #             html.H5("Number of Events by Time Period"),
+        #             dag.AgGrid(
+        #                 id="sum-table",
+        #                 columnDefs=sum_cols,
+        #                 rowData=pd.DataFrame().to_dict("records"), 
+        #                 columnSize="sizeToFit",
+        #                 dashGridOptions={"resizable": True, "sortable": True}
+        #             ),
+        #         ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
+        #     ]),
+        #     dbc.Row([
+        #         dbc.Col([
+        #             html.H5("Select Time Period"),
+        #             dcc.Dropdown(
+        #                 id='period-dropdown',
+        #                 options=[{'label': prd, 'value': prd} for prd in merged_df['period'].unique()],
+        #                 value=merged_df['period'].unique()[-1],
+        #                 clearable=True,
+        #                 multi=False
+        #             ),
+        #             dcc.Graph(id='reading-graph'),
+        #         ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
+        #     ]),
+        #     dbc.Row([
+        #         dbc.Col([
+        #             html.H5("Benzene Events"),
+        #             dag.AgGrid(
+        #                 id="benz-table",
+        #                 columnDefs=[{"field": i} for i in benz_tbl_cols],
+        #                 rowData=pd.DataFrame().to_dict("records"), 
+        #                 columnSize="autoSize",
+        #                 dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
+        #             ),
+        #         ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
+        #     ]),
+        #     dbc.Row([
+        #         dbc.Col([
+        #             html.H5("Naphthalene Events"),
+        #             dag.AgGrid(
+        #                 id="naph-table",
+        #                 columnDefs=[{"field": i} for i in naph_tbl_cols],
+        #                 rowData=pd.DataFrame().to_dict("records"), 
+        #                 columnSize="autoSize",
+        #                 dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
+        #             ),
+        #         ], width=12, className="shadow-sm p-3 mb-5 bg-white rounded"),
+        #     ]),
+        # ]),
+        ## ----------------------------------------------------------------------------------- end of V1 tab content
+
+        ## ----------------------------------------------------------------------------------- start of V2 tab content
         dcc.Tab(label='V2', style=tab_style, selected_style=tab_selected_style, children=[
-            ## =========================== start of V2 tab content
             dbc.Row([
-            # Menu of criteria controls - 
+                #html.H4("Defining Events"),
+
+                ## - Menu of criteria controls ----------------------------------------------
                 dbc.Col([
+                    html.H4("Criteria Settings"),
+
+                    ## - Benzene criteria ---------------------------------------------------
+                    dbc.Row([
+                        html.H5("Benzene"),
+                        dbc.Col([
+                            html.Div(
+                                children=[
+                                    html.Label("At least one detection >= ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.Input(id='benz_lvl_thresh', type="number", value=100, debounce=True, style={'width':'75px'}),
+                                    html.Label(" ug/m3", style={'fontWeight': 'bold', 'marginLeft': '10px'}),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                            html.Div(
+                                children=[
+                                    html.Label("Integration Time: ", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    html.Div(
+                                        dcc.RangeSlider(
+                                            id='benz-intg-slider-2',
+                                            min=merged_df['integration time.benzene'].min(),
+                                            max=merged_df['integration time.benzene'].max(),
+                                            value=[merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max()],
+                                            marks=None,
+                                            tooltip={"placement": "bottom", "always_visible": False} 
+                                        ),
+                                        style={'width': '66%', 'marginLeft': 'auto',}
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                        ]),
+                        dbc.Col([
+                            html.Div(
+                                children=[
+                                    html.Label("Strength: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Div(
+                                        dcc.Slider(
+                                            merged_df['strength.benzene'].min(), merged_df['strength.benzene'].max(),
+                                            value=merged_df['strength.benzene'].min(),
+                                            id='benz-strength-slider-2'
+                                        ),
+                                        style={'width': '80%', 'marginLeft': 'auto'}
+                                    )
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                            html.Div(
+                                children=[
+                                    html.Label("R-Sq: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Div(
+                                        dcc.Slider(
+                                            merged_df['benzene.rsq'].min(), merged_df['benzene.rsq'].max(),
+                                            value=merged_df['benzene.rsq'].min(),
+                                            id='benz-rsq-slider-2'
+                                        ),
+                                        style={'width': '80%', 'marginLeft': 'auto'}
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                        ]),
+                    ], className="mb-4", style={"padding-left": "30px", "padding-right": "30px"}),
+                    ## - Naphthalene criteria ---------------------------------------------------
+                    dbc.Row([
+                        html.H5("Naphthalene"),
+                        dbc.Col([
+                            html.Div(
+                                children=[
+                                    html.Label("At least one detection >= ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.Input(id='naph_lvl_thresh', type="number", value=100, debounce=True, style={'width':'75px'}),
+                                    html.Label(" ug/m3", style={'fontWeight': 'bold', 'marginLeft': '10px'}),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                            html.Div(
+                                children=[
+                                    html.Label("Integration Time: ", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    html.Div(
+                                        dcc.RangeSlider(
+                                            id='naph-intg-slider-2',
+                                            min=merged_df['integration time.naphthalene'].min(),
+                                            max=merged_df['integration time.naphthalene'].max(),
+                                            value=[merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max()],
+                                            marks=None,
+                                            tooltip={"placement": "bottom", "always_visible": False} ,
+                                        ),
+                                    style={'width': '66%', 'marginLeft': 'auto',}
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                        ]),
+                        dbc.Col([
+                            html.Div(
+                                children=[
+                                    html.Label("Strength: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Div(
+                                        dcc.Slider(
+                                            merged_df['strength.naphthalene'].min(), merged_df['strength.naphthalene'].max(),
+                                            value=merged_df['strength.naphthalene'].min(),
+                                            id='naph-strength-slider-2',
+                                        ),
+                                        style={'width': '80%', 'marginLeft': 'auto'}
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                            html.Div(
+                                children=[
+                                    html.Label("R-Sq: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    html.Div(
+                                        dcc.Slider(
+                                            merged_df['naphthalene.rsq'].min(), merged_df['naphthalene.rsq'].max(),
+                                            value=merged_df['naphthalene.rsq'].min(),
+                                            id='naph-rsq-slider-2'
+                                        ),
+                                        style={'width': '80%', 'marginLeft': 'auto'}
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
+                            ),
+                        ]),
+                    ], className="mb-5", style={"padding-left": "30px", "padding-right": "30px"}),
+                    dbc.Row([], className="mb-5"),
+                    ## - Combined settings ---------------------------------------------------
                     dbc.Row([
                         dbc.Col([
-                            html.H5("Set Criteria"),
-                            html.H6("Benzene"),
-                            html.Div('At least one detection >= ug/m3 level'),
-                            dcc.Input(id='benz_lvl_thresh', type="number", value=100, debounce=True),
-                            html.Div('Strength Threshold'),
-                            dcc.Slider(
-                                merged_df['strength.benzene'].min(), merged_df['strength.benzene'].max(),
-                                value=merged_df['strength.benzene'].min(),
-                                id='benz-strength-slider-2'
+                            html.Div(
+                                children=[
+                                    html.Label("Sync naphthalene criteria with benzene criteria ", style={'fontWeight': 'bold', 'marginRight': '5px'}),
+                                    daq.ToggleSwitch(
+                                        id='sync-check-2',
+                                        value=False,
+                                        size=40,
+                                        theme='dark'
+                                    ),
+                                ],
+                                style={'display': 'flex', 'flexDirection': 'row', 'justifyContent': 'flex-start', 'gap':'10px'}
                             ),
-                            html.Div('Integration Time Threshold'),
-                            dcc.RangeSlider(
-                                id='benz-intg-slider-2',
-                                min=merged_df['integration time.benzene'].min(),
-                                max=merged_df['integration time.benzene'].max(),
-                                value=[merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max()],
-                                marks=None,
-                                tooltip={"placement": "bottom", "always_visible": False} # Optional floating value labels
+                        ]),
+                        dbc.Col([
+                            html.Div(
+                                children=[
+                                    html.Label('Criteria to prioritize', style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.RadioItems(
+                                        options=["Either criteria", "Both criteria", "At least benzene criteria", "At least naphthalene criteria"],
+                                        value="Either criteria",
+                                        inline=True,
+                                        id='detect-preference'
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'baseline'}
                             ),
-                            # dcc.Slider(
-                            #     merged_df['integration time.benzene'].min(), merged_df['integration time.benzene'].max(),
-                            #     value=merged_df['integration time.benzene'].min(),
-                            #     id='benz-intg-slider-2'
-                            # ),
-                            html.Div('R-squared Threshold'),
-                            dcc.Slider(
-                                merged_df['benzene.rsq'].min(), merged_df['benzene.rsq'].max(),
-                                value=merged_df['benzene.rsq'].min(),
-                                id='benz-rsq-slider-2'
-                            ),
-                            html.H6("Naphthalene"),
-                            html.Div('At least one detection >= ug/m3 level'),
-                            dcc.Input(id='naph_lvl_thresh', type="number", value=100, debounce=True),
-                            html.Div('Strength Threshold'),
-                            dcc.Slider(
-                                merged_df['strength.naphthalene'].min(), merged_df['strength.naphthalene'].max(),
-                                value=merged_df['strength.naphthalene'].min(),
-                                id='naph-strength-slider-2'
-                            ),
-                            html.Div('Integration Time Threshold'),
-                            dcc.RangeSlider(
-                                id='naph-intg-slider-2',
-                                min=merged_df['integration time.naphthalene'].min(),
-                                max=merged_df['integration time.naphthalene'].max(),
-                                value=[merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max()],
-                                marks=None,
-                                tooltip={"placement": "bottom", "always_visible": False} # Optional floating value labels
-                            ),
-                            # dcc.Slider(
-                            #     merged_df['integration time.naphthalene'].min(), merged_df['integration time.naphthalene'].max(),
-                            #     value=merged_df['integration time.naphthalene'].min(),
-                            #     id='naph-intg-slider-2'
-                            # ),
-                            html.Div('R-Squared Threshold'),
-                            dcc.Slider(
-                                merged_df['naphthalene.rsq'].min(), merged_df['naphthalene.rsq'].max(),
-                                value=merged_df['naphthalene.rsq'].min(),
-                                id='naph-rsq-slider-2'
-                            ),
-                            html.Div('---'),
-                            html.Div([
-                                daq.ToggleSwitch(
-                                    id='sync-check-2',
-                                    value=False,
-                                    label='Sync naphthalene criteria with benzene criteria',
-                                    labelPosition='top',
-                                    size=40,
-                                    theme='dark'
-                                ),
-                            ]),
-                            html.Div('Criteria to prioritize'),
-                            dcc.RadioItems(
-                                options=["Either criteria", "At least benzene criteria", "At least naphthalene criteria", "Both criteria"],
-                                value="Either criteria",
-                                inline=True,
-                                id='detect-preference'
-                            ),
-                        ], style={"padding-left": "50px", "padding-right": "50px"}),
-                    ]),
-                ], width=4, className="shadow-sm p-3 mb-5 bg-white rounded"),
+                        ]),
+                    ], style={"padding-left": "30px", "padding-right": "50px"}),
+                ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
+
+                ## - Summary table of events by time period --------------------------------
                 dbc.Col([
-                    html.H5("Number of Events by Time & Sampling Period"),
-                    html.Div('Prior span of time without detection (in hours)'),
-                    dcc.Input(id='no-detect-span', type="number", value=8, debounce=True),
-                    html.Div(''),
+                    html.H4("Number of Events by Time & Sampling Period"),
+                    html.Div(
+                        children=[
+                            html.Label("Prior span of time without detection:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                            dcc.Input(id='no-detect-span', type="number", value=8, debounce=True, style={"width": "50px"}),
+                            html.Label(" hour(s)", style={'fontWeight': 'bold', 'marginLeft': '10px'}),
+                        ],
+                        style={'display': 'flex', 'alignItems': 'center'} # Aligns label and dropdown vertically
+                    ),
                     dag.AgGrid(
                         id="detect-table",
                         columnDefs=detect_cols,
@@ -524,272 +620,298 @@ app.layout = dbc.Container([
                         columnSize="sizeToFit",
                         dashGridOptions={"resizable": True, "sortable": True}
                     ),
-                ], width=8, className="shadow-sm p-3 mb-5 bg-white rounded"),
-            ]),
+                ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded", style={"padding-left": "50px", "padding-right": "50px"}),
+            ], className="mb-3"),
+            
+            ## - Event details section ---------------------------------------------------
             dbc.Row([
-                html.H3("Event Details"),
+                html.H4("Reviewing Event Details"),
                 dbc.Row([
+
+                    ## - Graph of readings for time period --------------------------------
                     dbc.Col([
-                        html.H5("Select Time Period"),
-                        dcc.Dropdown(
-                            id='period-dropdown-2',
-                            options=[{'label': prd, 'value': prd} for prd in merged_df['period'].unique()],
-                            value=merged_df['period'].unique()[-1],
-                            clearable=True,
-                            multi=False
+                        dbc.Row([
+                            html.Div(
+                                children=[
+                                    html.Label("Select Time Period: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                    dcc.Dropdown(
+                                        id='period-dropdown-2',
+                                        options=[{'label': prd, 'value': prd} for prd in merged_df['period'].unique()],
+                                        value=merged_df['period'].unique()[-1],
+                                        clearable=True,
+                                        multi=False
+                                    ),
+                                ],
+                                style={'display': 'flex', 'alignItems': 'center'}
+                            ),
+                        ]),
+                        dcc.Graph(id='reading-graph-2'),
+                    ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
+
+                    ## - Table of events for time period --------------------------------
+                    dbc.Col([
+                        dbc.Row([
+                                html.Div(
+                                    children=[
+                                        html.Label("Select Sampling Duration: ", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                        dcc.Dropdown(
+                                            id='sample-period-dropdown',
+                                            options=[{'label': prd, 'value': prd} for prd in sample_periods],
+                                            value=1,
+                                            clearable=True,
+                                            multi=False,
+                                            style={"width": "100px"}
+                                        ),
+                                        html.Label(" hour(s)", style={'fontWeight': 'bold', 'marginLeft': '10px'})
+                                    ],
+                                    style={'display': 'flex', 'alignItems': 'center'}
+                                ),
+                        ]),
+                        dbc.Row([]),
+                        dbc.Row([
+                            dbc.Col([html.Div('Click on a start date in table to jump to date in graph')]),
+                            dbc.Col([html.Button("Export data to csv", id="btn-export", n_clicks=0)], width=2),
+                        ]),
+                        dag.AgGrid(
+                            id="event-table",
+                            columnDefs=event_tbl_cols,
+                            rowData=pd.DataFrame().to_dict("records"), 
+                            columnSize="autoSize",
+                            dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"},
+                            csvExportParams={"fileName": "events.csv"}
                         ),
-                    ]),
-                dbc.Row([
-                    dcc.Graph(id='reading-graph-2'),
-                    html.Div('-'),
-                    html.H5("Select Sampling Duration (in hours)"),
-                    dcc.Dropdown(
-                        id='sample-period-dropdown',
-                        options=[{'label': prd, 'value': prd} for prd in [1, 2, 4, 8, 12, 24]],
-                        value=1,
-                        clearable=True,
-                        multi=False
-                    ),
-                    html.Div('Click on a start date in table to jump to date in graph'),
-                    dag.AgGrid(
-                        id="event-table",
-                        columnDefs=event_tbl_cols,
-                        rowData=pd.DataFrame().to_dict("records"), 
-                        columnSize="autoSize",
-                        dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"},
-                    ),
-                ]),
+                    ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
                 ]),
             ]),
-            ## =========================== end of V2 tab content
+            ## ----------------------------------------------------------------------------------- end of V2 tab content
         ])
     ])
 ], fluid=True)
 
-## === Callbacks & functions for tab V1 ===========================================
-@callback(
-    Output('radio-naph-detect', 'value'),
-    Output('naph-strength-slider', 'value'),
-    Output('naph-intg-slider', 'value'),
-    Output('naph-rsq-slider', 'value'),
-    Output('naph-level', 'value'),
-    Output('naph-span', 'value'),
-    Input('sync-check', 'value'),
-    Input('radio-benz-detect', 'value'),
-    Input('benz-strength-slider', 'value'),
-    Input('benz-intg-slider', 'value'),
-    Input('benz-rsq-slider', 'value'),
-    Input('benz-level', 'value'),
-    Input('benz-span', 'value'),
-)
-def sync_criteria(sync_check, radio_benz_detect, benz_strength_slider, benz_intg_slider, benz_rsq_slider, benz_level, benz_span):
-    if sync_check:
-        radio_naph_detect = radio_benz_detect
-        naph_strength_slider = benz_strength_slider
-        naph_intg_slider = benz_intg_slider
-        naph_rsq_slider = benz_rsq_slider
-        naph_level = benz_level
-        naph_span = benz_span
-        return radio_naph_detect, naph_strength_slider, naph_intg_slider, naph_rsq_slider, naph_level, naph_span
-    return no_update
 
-@callback(
-    Output('sum-table', 'rowData'),
-    Output('reading-graph', 'figure'),
-    Output('benz-table', 'rowData'),
-    Output('naph-table', 'rowData'),
-    Input('period-dropdown', 'value'),
-    Input('radio-benz-detect', 'value'),
-    Input('benz-strength-slider', 'value'),
-    Input('benz-intg-slider', 'value'),
-    Input('benz-rsq-slider', 'value'),
-    Input('benz-level', 'value'),
-    Input('benz-span', 'value'),
-    Input('radio-naph-detect', 'value'),
-    Input('naph-strength-slider', 'value'),
-    Input('naph-intg-slider', 'value'),
-    Input('naph-rsq-slider', 'value'),
-    Input('naph-level', 'value'),
-    Input('naph-span', 'value'),
-    Input('criteria-preference', 'value'),
-    Input('benz-table', 'cellClicked'),
-    Input('naph-table', 'cellClicked'),
-)
-def update_data(period, ben_detect, ben_strength, ben_int_time, ben_r_sq, ben_level_val, ben_span, naph_detect, naph_strength, naph_int_time, naph_r_sq, naph_level_val, naph_span, criteria_pref, benz_select, naph_select):
+#%% ====================================================================
+# 4. APP FUNCTIONALITY
+# ======================================================================
 
-    df = merged_df.copy()
+## - Callbacks & functions for tab V1 ----------------------------------
 
-    ## - benzene criteria
-    df['meets_benzene_criteria'] = ((df['detect.benzene'] == ben_detect) & 
-                                    (df['strength.benzene'] >= ben_strength) & 
-                                    (df['integration time.benzene'] >= ben_int_time) & 
-                                    (df['benzene.rsq'] >= ben_r_sq) & 
-                                    (df['ug/m3.benzene'] >= ben_level_val))
-    df['benzene_criteria_block'] = (df["meets_benzene_criteria"] != df["meets_benzene_criteria"].shift()).cumsum()
-    span_df = df.groupby(["benzene_criteria_block", "meets_benzene_criteria"])["datetime"].agg(benz_criteria_start="min", benz_criteria_end="max", benz_criteria_duration=lambda x: x.max() - x.min()).reset_index()
-    span_df['benz_criteria_duration'] = (span_df['benz_criteria_duration'].dt.total_seconds() // 60).astype(int)
-    span_df = span_df[span_df['meets_benzene_criteria']==True].copy()
-    df = df.merge(span_df, how='left', on=['benzene_criteria_block','meets_benzene_criteria'])
-    df['meets_benzene_criteria_and_span'] = (df['meets_benzene_criteria'] & (df['benz_criteria_duration'] >= ben_span))
+### - sync naphthalene criteria with benzene criteria
+# @callback(
+#     Output('radio-naph-detect', 'value'),
+#     Output('naph-strength-slider', 'value'),
+#     Output('naph-intg-slider', 'value'),
+#     Output('naph-rsq-slider', 'value'),
+#     Output('naph-level', 'value'),
+#     Output('naph-span', 'value'),
+#     Input('sync-check', 'value'),
+#     Input('radio-benz-detect', 'value'),
+#     Input('benz-strength-slider', 'value'),
+#     Input('benz-intg-slider', 'value'),
+#     Input('benz-rsq-slider', 'value'),
+#     Input('benz-level', 'value'),
+#     Input('benz-span', 'value'),
+# )
+# def sync_criteria(sync_check, radio_benz_detect, benz_strength_slider, benz_intg_slider, benz_rsq_slider, benz_level, benz_span):
+#     if sync_check:
+#         radio_naph_detect = radio_benz_detect
+#         naph_strength_slider = benz_strength_slider
+#         naph_intg_slider = benz_intg_slider
+#         naph_rsq_slider = benz_rsq_slider
+#         naph_level = benz_level
+#         naph_span = benz_span
+#         return radio_naph_detect, naph_strength_slider, naph_intg_slider, naph_rsq_slider, naph_level, naph_span
+#     return no_update
+
+# ### - update summary table, line graph, & benzene/naphthalene event tables based on criteria selections
+# @callback(
+#     Output('sum-table', 'rowData'),
+#     Output('reading-graph', 'figure'),
+#     Output('benz-table', 'rowData'),
+#     Output('naph-table', 'rowData'),
+#     Input('period-dropdown', 'value'),
+#     Input('radio-benz-detect', 'value'),
+#     Input('benz-strength-slider', 'value'),
+#     Input('benz-intg-slider', 'value'),
+#     Input('benz-rsq-slider', 'value'),
+#     Input('benz-level', 'value'),
+#     Input('benz-span', 'value'),
+#     Input('radio-naph-detect', 'value'),
+#     Input('naph-strength-slider', 'value'),
+#     Input('naph-intg-slider', 'value'),
+#     Input('naph-rsq-slider', 'value'),
+#     Input('naph-level', 'value'),
+#     Input('naph-span', 'value'),
+#     Input('criteria-preference', 'value'),
+#     Input('benz-table', 'cellClicked'),
+#     Input('naph-table', 'cellClicked'),
+# )
+# def update_data(period, ben_detect, ben_strength, ben_int_time, ben_r_sq, ben_level_val, ben_span, naph_detect, naph_strength, naph_int_time, naph_r_sq, naph_level_val, naph_span, criteria_pref, benz_select, naph_select):
+
+#     df = merged_df.copy()
+
+#     ## - benzene criteria
+#     df['meets_benzene_criteria'] = ((df['detect.benzene'] == ben_detect) & 
+#                                     (df['strength.benzene'] >= ben_strength) & 
+#                                     (df['integration time.benzene'] >= ben_int_time) & 
+#                                     (df['benzene.rsq'] >= ben_r_sq) & 
+#                                     (df['ug/m3.benzene'] >= ben_level_val))
+#     df['benzene_criteria_block'] = (df["meets_benzene_criteria"] != df["meets_benzene_criteria"].shift()).cumsum()
+#     span_df = df.groupby(["benzene_criteria_block", "meets_benzene_criteria"])["datetime"].agg(benz_criteria_start="min", benz_criteria_end="max", benz_criteria_duration=lambda x: x.max() - x.min()).reset_index()
+#     span_df['benz_criteria_duration'] = (span_df['benz_criteria_duration'].dt.total_seconds() // 60).astype(int)
+#     span_df = span_df[span_df['meets_benzene_criteria']==True].copy()
+#     df = df.merge(span_df, how='left', on=['benzene_criteria_block','meets_benzene_criteria'])
+#     df['meets_benzene_criteria_and_span'] = (df['meets_benzene_criteria'] & (df['benz_criteria_duration'] >= ben_span))
     
-    ## - naphthalene criteria
-    df['meets_naph_criteria'] = ((df['detect.naphthalene'] == naph_detect) & 
-                                 (df['strength.naphthalene'] >= naph_strength) & 
-                                 (df['integration time.naphthalene'] >= naph_int_time) & 
-                                 (df['naphthalene.rsq'] >= naph_r_sq) & 
-                                 (df['ug/m3.naphthalene'] >= naph_level_val))
-    df['naph_criteria_block'] = (df["meets_naph_criteria"] != df["meets_naph_criteria"].shift()).cumsum()
-    span_df = df.groupby(["naph_criteria_block", "meets_naph_criteria"])["datetime"].agg(naph_criteria_start="min", naph_criteria_end="max", naph_criteria_duration=lambda x: x.max() - x.min()).reset_index()
-    span_df['naph_criteria_duration'] = (span_df['naph_criteria_duration'].dt.total_seconds() // 60).astype(int)
-    span_df = span_df[span_df['meets_naph_criteria']==True].copy()
-    df = df.merge(span_df, how='left', on=['naph_criteria_block','meets_naph_criteria'])
-    df['meets_naph_criteria_and_span'] = (df['meets_naph_criteria'] & (df['naph_criteria_duration'] >= naph_span))
+#     ## - naphthalene criteria
+#     df['meets_naph_criteria'] = ((df['detect.naphthalene'] == naph_detect) & 
+#                                  (df['strength.naphthalene'] >= naph_strength) & 
+#                                  (df['integration time.naphthalene'] >= naph_int_time) & 
+#                                  (df['naphthalene.rsq'] >= naph_r_sq) & 
+#                                  (df['ug/m3.naphthalene'] >= naph_level_val))
+#     df['naph_criteria_block'] = (df["meets_naph_criteria"] != df["meets_naph_criteria"].shift()).cumsum()
+#     span_df = df.groupby(["naph_criteria_block", "meets_naph_criteria"])["datetime"].agg(naph_criteria_start="min", naph_criteria_end="max", naph_criteria_duration=lambda x: x.max() - x.min()).reset_index()
+#     span_df['naph_criteria_duration'] = (span_df['naph_criteria_duration'].dt.total_seconds() // 60).astype(int)
+#     span_df = span_df[span_df['meets_naph_criteria']==True].copy()
+#     df = df.merge(span_df, how='left', on=['naph_criteria_block','meets_naph_criteria'])
+#     df['meets_naph_criteria_and_span'] = (df['meets_naph_criteria'] & (df['naph_criteria_duration'] >= naph_span))
 
-    ## - indicate based on criteria meeting
-    if criteria_pref == "Both":
-        df['candidate_event'] = (df['meets_benzene_criteria_and_span'] & df['meets_naph_criteria_and_span'])
-    elif criteria_pref == "At least one":
-        df['candidate_event'] = (df['meets_benzene_criteria_and_span'] | df['meets_naph_criteria_and_span'])
-    elif criteria_pref == "At least Benzene":
-        df['candidate_event'] = (df['meets_benzene_criteria_and_span'])
-    elif criteria_pref == "At least Naphthalene":
-        df['candidate_event'] = (df['meets_naph_criteria_and_span'])
+#     ## - indicate based on criteria meeting
+#     if criteria_pref == "Both":
+#         df['candidate_event'] = (df['meets_benzene_criteria_and_span'] & df['meets_naph_criteria_and_span'])
+#     elif criteria_pref == "At least one":
+#         df['candidate_event'] = (df['meets_benzene_criteria_and_span'] | df['meets_naph_criteria_and_span'])
+#     elif criteria_pref == "At least Benzene":
+#         df['candidate_event'] = (df['meets_benzene_criteria_and_span'])
+#     elif criteria_pref == "At least Naphthalene":
+#         df['candidate_event'] = (df['meets_naph_criteria_and_span'])
 
 
-    ## - for summary of periods:
-    benz_events_summary = df[df['meets_benzene_criteria_and_span']].copy()
-    benz_events_summary = benz_events_summary.groupby(['period', 'benzene_criteria_block', 'benz_criteria_duration', 'benz_criteria_start', 'benz_criteria_end']).agg({
-                                                    'ug/m3.benzene': ['count', 'min', 'max', 'mean'],
-                                                    'ppb.benzene': ['count', 'min', 'max', 'mean'],
-                                                    'strength.benzene': ['min', 'max', 'mean'],
-                                                    'integration time.benzene': ['min', 'max', 'mean'], 
-                                                    'benzene.rsq': ['min', 'max', 'mean'],
-                                                    'meets_naph_criteria_and_span': ['max'],
-                                                    'meets_naph_criteria': ['max'],
-                                                    'ug/m3.naphthalene': ['count', 'min', 'max', 'mean'],
-                                                    'ppb.naphthalene': ['count', 'min', 'max', 'mean'],
-                                                    'strength.naphthalene': ['min', 'max', 'mean'],
-                                                    'integration time.naphthalene': ['min', 'max', 'mean'], 
-                                                    'naphthalene.rsq': ['min', 'max', 'mean'],
-                                                    })
-    benz_events_summary.reset_index(inplace=True)
+#     ## - for summary of periods:
+#     benz_events_summary = df[df['meets_benzene_criteria_and_span']].copy()
+#     benz_events_summary = benz_events_summary.groupby(['period', 'benzene_criteria_block', 'benz_criteria_duration', 'benz_criteria_start', 'benz_criteria_end']).agg({
+#                                                     'ug/m3.benzene': ['count', 'min', 'max', 'mean'],
+#                                                     'ppb.benzene': ['count', 'min', 'max', 'mean'],
+#                                                     'strength.benzene': ['min', 'max', 'mean'],
+#                                                     'integration time.benzene': ['min', 'max', 'mean'], 
+#                                                     'benzene.rsq': ['min', 'max', 'mean'],
+#                                                     'meets_naph_criteria_and_span': ['max'],
+#                                                     'meets_naph_criteria': ['max'],
+#                                                     'ug/m3.naphthalene': ['count', 'min', 'max', 'mean'],
+#                                                     'ppb.naphthalene': ['count', 'min', 'max', 'mean'],
+#                                                     'strength.naphthalene': ['min', 'max', 'mean'],
+#                                                     'integration time.naphthalene': ['min', 'max', 'mean'], 
+#                                                     'naphthalene.rsq': ['min', 'max', 'mean'],
+#                                                     })
+#     benz_events_summary.reset_index(inplace=True)
 
-    naph_events_summary = df[df['meets_naph_criteria_and_span']].copy()
-    naph_events_summary = naph_events_summary.groupby(['period', 'naph_criteria_block', 'naph_criteria_duration', 'naph_criteria_start', 'naph_criteria_end']).agg({
-                                                    'ug/m3.naphthalene': ['count', 'min', 'max', 'mean'],
-                                                    'ppb.naphthalene': ['count', 'min', 'max', 'mean'],
-                                                    'strength.naphthalene': ['min', 'max', 'mean'],
-                                                    'integration time.naphthalene': ['min', 'max', 'mean'], 
-                                                    'naphthalene.rsq': ['min', 'max', 'mean'],
-                                                    'meets_benzene_criteria_and_span': ['max'],
-                                                    'meets_benzene_criteria': ['max'],
-                                                    'ug/m3.benzene': ['count', 'min', 'max', 'mean'],
-                                                    'ppb.benzene': ['count', 'min', 'max', 'mean'],
-                                                    'strength.benzene': ['min', 'max', 'mean'],
-                                                    'integration time.benzene': ['min', 'max', 'mean'], 
-                                                    'benzene.rsq': ['min', 'max', 'mean'],
-                                                    })
-    naph_events_summary.reset_index(inplace=True)
+#     naph_events_summary = df[df['meets_naph_criteria_and_span']].copy()
+#     naph_events_summary = naph_events_summary.groupby(['period', 'naph_criteria_block', 'naph_criteria_duration', 'naph_criteria_start', 'naph_criteria_end']).agg({
+#                                                     'ug/m3.naphthalene': ['count', 'min', 'max', 'mean'],
+#                                                     'ppb.naphthalene': ['count', 'min', 'max', 'mean'],
+#                                                     'strength.naphthalene': ['min', 'max', 'mean'],
+#                                                     'integration time.naphthalene': ['min', 'max', 'mean'], 
+#                                                     'naphthalene.rsq': ['min', 'max', 'mean'],
+#                                                     'meets_benzene_criteria_and_span': ['max'],
+#                                                     'meets_benzene_criteria': ['max'],
+#                                                     'ug/m3.benzene': ['count', 'min', 'max', 'mean'],
+#                                                     'ppb.benzene': ['count', 'min', 'max', 'mean'],
+#                                                     'strength.benzene': ['min', 'max', 'mean'],
+#                                                     'integration time.benzene': ['min', 'max', 'mean'], 
+#                                                     'benzene.rsq': ['min', 'max', 'mean'],
+#                                                     })
+#     naph_events_summary.reset_index(inplace=True)
 
-    n_benz_events = benz_events_summary.groupby('period').agg({('benzene_criteria_block', ''): ['count'], ('benz_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
-    n_benz_events.columns = ['_'.join(col) for col in n_benz_events.columns.to_flat_index()]
-    n_benz_events.rename(columns={"period__":"period", "benzene_criteria_block__count":"benzene_criteria_block", "benz_criteria_duration__mean":"duration_mean", "benz_criteria_duration__min":"duration_min", "benz_criteria_duration__max":"duration_max"}, inplace=True)
+#     n_benz_events = benz_events_summary.groupby('period').agg({('benzene_criteria_block', ''): ['count'], ('benz_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
+#     n_benz_events.columns = ['_'.join(col) for col in n_benz_events.columns.to_flat_index()]
+#     n_benz_events.rename(columns={"period__":"period", "benzene_criteria_block__count":"benzene_criteria_block", "benz_criteria_duration__mean":"duration_mean", "benz_criteria_duration__min":"duration_min", "benz_criteria_duration__max":"duration_max"}, inplace=True)
 
-    n_naph_events = naph_events_summary.groupby('period').agg({('naph_criteria_block', ''): ['count'], ('naph_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
-    n_naph_events.columns = ['_'.join(col) for col in n_naph_events.columns.to_flat_index()]
-    n_naph_events.rename(columns={"period__":"period", "naph_criteria_block__count":"naph_criteria_block", "naph_criteria_duration__mean":"duration_mean", "naph_criteria_duration__min":"duration_min", "naph_criteria_duration__max":"duration_max"}, inplace=True)
+#     n_naph_events = naph_events_summary.groupby('period').agg({('naph_criteria_block', ''): ['count'], ('naph_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
+#     n_naph_events.columns = ['_'.join(col) for col in n_naph_events.columns.to_flat_index()]
+#     n_naph_events.rename(columns={"period__":"period", "naph_criteria_block__count":"naph_criteria_block", "naph_criteria_duration__mean":"duration_mean", "naph_criteria_duration__min":"duration_min", "naph_criteria_duration__max":"duration_max"}, inplace=True)
 
-    n_both_events = benz_events_summary[benz_events_summary[('meets_naph_criteria_and_span', 'max')]].groupby('period').agg({('meets_naph_criteria_and_span', 'max'): ['sum'], ('benz_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
-    n_both_events.columns = ['_'.join(col) for col in n_both_events.columns.to_flat_index()]
-    n_both_events.rename(columns={"period__":"period", "meets_naph_criteria_and_span_max_sum":"meets_naph_criteria_and_span", "benz_criteria_duration__mean":"duration_mean", "benz_criteria_duration__min":"duration_min", "benz_criteria_duration__max":"duration_max"}, inplace=True)
+#     n_both_events = benz_events_summary[benz_events_summary[('meets_naph_criteria_and_span', 'max')]].groupby('period').agg({('meets_naph_criteria_and_span', 'max'): ['sum'], ('benz_criteria_duration', ''): ['mean', 'min', 'max']}).reset_index()
+#     n_both_events.columns = ['_'.join(col) for col in n_both_events.columns.to_flat_index()]
+#     n_both_events.rename(columns={"period__":"period", "meets_naph_criteria_and_span_max_sum":"meets_naph_criteria_and_span", "benz_criteria_duration__mean":"duration_mean", "benz_criteria_duration__min":"duration_min", "benz_criteria_duration__max":"duration_max"}, inplace=True)
 
-    summary_df = n_both_events.merge(n_benz_events, how='left', on='period')
-    summary_df = summary_df.merge(n_naph_events, how='left', on='period')
-    summary_df.rename(columns={"meets_naph_criteria_and_span":"both_count",
-                                    "benzene_criteria_block":"benz_count",
-                                    "naph_criteria_block":"naph_count"}, inplace=True)
-    summary_df = summary_df.round(1)
-    sum_data = summary_df.to_dict("records")
+#     summary_df = n_both_events.merge(n_benz_events, how='left', on='period')
+#     summary_df = summary_df.merge(n_naph_events, how='left', on='period')
+#     summary_df.rename(columns={"meets_naph_criteria_and_span":"both_count",
+#                                     "benzene_criteria_block":"benz_count",
+#                                     "naph_criteria_block":"naph_count"}, inplace=True)
+#     summary_df = summary_df.round(1)
+#     sum_data = summary_df.to_dict("records")
 
     
-    ## - for line chart: show all events in time period
-    max_y = max(df["ug/m3.benzene"].max(), df["ug/m3.naphthalene"].max()) + 100
-    plot_df = df[df['period'] == period].copy().reset_index()
-    fig = px.line(plot_df, x="datetime", y=["ug/m3.benzene", "ug/m3.naphthalene"], range_y=[0, max_y], labels={"value": "ug/m3"})
-    fig.update_traces(name="Benzene", selector={"name": "ug/m3.benzene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
-    fig.update_traces(name="Naphthalene", selector={"name": "ug/m3.naphthalene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
-    benz_events = plot_df[plot_df['meets_benzene_criteria_and_span']].copy()
-    benz_events = benz_events[['benz_criteria_start', 'benz_criteria_end']].drop_duplicates()
-    naph_events = plot_df[plot_df['meets_naph_criteria_and_span']].copy()
-    naph_events = naph_events[['naph_criteria_start', 'naph_criteria_end']].drop_duplicates()
-    for index, event in benz_events.iterrows():
-        fig.add_vrect(
-            x0=event["benz_criteria_start"], x1=event["benz_criteria_end"],
-            fillcolor="blue", opacity=0.2,
-            layer="below", line_width=0,
-        )
-    for index, event in naph_events.iterrows():
-        fig.add_vrect(
-            x0=event["naph_criteria_start"], x1=event["naph_criteria_end"],
-            fillcolor="red", opacity=0.2,
-            layer="below", line_width=0,
-        )
-    fig.update_layout(
-        legend=dict(
-            orientation="h",  # Make the legend horizontal
-            yanchor="bottom",  # Anchor the bottom of the legend
-            y=1.02,  # Position slightly above the top of the plot
-            xanchor="center",  # Center the legend horizontally
-            x=0.5,  # Place it in the middle of the x-axis
-        )
-    )
-    if benz_select:
-        # Extract the date value from the clicked row
-        selected_date = pd.to_datetime(benz_select["value"])
-        
-        # Add a visual anchor (vertical dashed line) at the selected date
-        fig.add_vline(x=selected_date, line_width=2, line_dash="dash", line_color="darkgray")
-        
-        # Center the x-axis view around the selected date (optional padding)
-        fig.update_layout(
-            xaxis_range=[
-                pd.to_datetime(selected_date) - pd.Timedelta(hours=12),
-                pd.to_datetime(selected_date) + pd.Timedelta(hours=12)
-            ]
-        )
-    if naph_select:
-        # Extract the date value from the clicked row
-        selected_date = pd.to_datetime(naph_select["value"])
-        
-        # Add a visual anchor (vertical dashed line) at the selected date
-        fig.add_vline(x=selected_date, line_width=2, line_dash="dash", line_color="darkgray")
-        
-        # Center the x-axis view around the selected date (optional padding)
-        fig.update_layout(
-            xaxis_range=[
-                pd.to_datetime(selected_date) - pd.Timedelta(hours=12),
-                pd.to_datetime(selected_date) + pd.Timedelta(hours=12)
-            ]
-        )
+#     ## - for line chart: show all events in time period
+#     max_y = max(df["ug/m3.benzene"].max(), df["ug/m3.naphthalene"].max()) + 100
+#     plot_df = df[df['period'] == period].copy().reset_index()
+#     fig = px.line(plot_df, x="datetime", y=["ug/m3.benzene", "ug/m3.naphthalene"], range_y=[0, max_y], labels={"value": "ug/m3"})
+#     fig.update_traces(name="Benzene", selector={"name": "ug/m3.benzene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
+#     fig.update_traces(name="Naphthalene", selector={"name": "ug/m3.naphthalene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
+#     benz_events = plot_df[plot_df['meets_benzene_criteria_and_span']].copy()
+#     benz_events = benz_events[['benz_criteria_start', 'benz_criteria_end']].drop_duplicates()
+#     naph_events = plot_df[plot_df['meets_naph_criteria_and_span']].copy()
+#     naph_events = naph_events[['naph_criteria_start', 'naph_criteria_end']].drop_duplicates()
+#     for index, event in benz_events.iterrows():
+#         fig.add_vrect(
+#             x0=event["benz_criteria_start"], x1=event["benz_criteria_end"],
+#             fillcolor="blue", opacity=0.2,
+#             layer="below", line_width=0,
+#         )
+#     for index, event in naph_events.iterrows():
+#         fig.add_vrect(
+#             x0=event["naph_criteria_start"], x1=event["naph_criteria_end"],
+#             fillcolor="red", opacity=0.2,
+#             layer="below", line_width=0,
+#         )
+#     fig.update_layout(
+#         legend=dict(
+#             orientation="h",
+#             yanchor="bottom",
+#             y=1.02,
+#             xanchor="center",
+#             x=0.5,
+#         )
+#     )
+#     if benz_select:
+#         selected_date = pd.to_datetime(benz_select["value"])
+#         fig.add_vline(x=selected_date, line_width=2, line_dash="dash", line_color="darkgray")
+#         fig.update_layout(
+#             xaxis_range=[
+#                 pd.to_datetime(selected_date) - pd.Timedelta(hours=12),
+#                 pd.to_datetime(selected_date) + pd.Timedelta(hours=12)
+#             ]
+#         )
+#     if naph_select:
+#         selected_date = pd.to_datetime(naph_select["value"])
+#         fig.add_vline(x=selected_date, line_width=2, line_dash="dash", line_color="darkgray")
+#         fig.update_layout(
+#             xaxis_range=[
+#                 pd.to_datetime(selected_date) - pd.Timedelta(hours=12),
+#                 pd.to_datetime(selected_date) + pd.Timedelta(hours=12)
+#             ]
+#         )
 
-    ## - for event tables under line graph
-    benz_events_summary.columns = ['_'.join(col) for col in benz_events_summary.columns.to_flat_index()]
-    benz_summary = benz_events_summary[benz_events_summary['period_']==period].copy()
-    benz_summary = benz_summary[list(benz_rename.keys())]
-    benz_summary.rename(columns=benz_rename, inplace=True)
-    benz_summary["Duration"] = benz_summary["Duration"] + 5
-    benz_data = benz_summary.to_dict("records")
-    naph_events_summary.columns = ['_'.join(col) for col in naph_events_summary.columns.to_flat_index()]
-    naph_summary = naph_events_summary[naph_events_summary['period_']==period].copy()
-    naph_summary = naph_summary[list(naph_rename.keys())]
-    naph_summary.rename(columns=naph_rename, inplace=True)
-    naph_summary["Duration"] = naph_summary["Duration"] + 5
-    naph_data = naph_summary.to_dict("records")
+#     ## - for event tables under line graph
+#     benz_events_summary.columns = ['_'.join(col) for col in benz_events_summary.columns.to_flat_index()]
+#     benz_summary = benz_events_summary[benz_events_summary['period_']==period].copy()
+#     benz_summary = benz_summary[list(benz_rename.keys())]
+#     benz_summary.rename(columns=benz_rename, inplace=True)
+#     benz_summary["Duration"] = benz_summary["Duration"] + 5
+#     benz_data = benz_summary.to_dict("records")
+#     naph_events_summary.columns = ['_'.join(col) for col in naph_events_summary.columns.to_flat_index()]
+#     naph_summary = naph_events_summary[naph_events_summary['period_']==period].copy()
+#     naph_summary = naph_summary[list(naph_rename.keys())]
+#     naph_summary.rename(columns=naph_rename, inplace=True)
+#     naph_summary["Duration"] = naph_summary["Duration"] + 5
+#     naph_data = naph_summary.to_dict("records")
 
-    return sum_data, fig, benz_data, naph_data
+#     return sum_data, fig, benz_data, naph_data
 
 
 ## === Callbacks & functions for tab V2 ===========================================
+
+### - sync naphthalene criteria with benzene criteria
 @callback(
     Output('naph_lvl_thresh', 'value'),
     Output('naph-strength-slider-2', 'value'),
@@ -810,6 +932,7 @@ def sync_criteria(sync_check, benz_lvl_thresh, benz_str, benz_intg, benz_rsq):
         return naph_lvl_thresh, naph_str, naph_intg, naph_rsq
     return no_update
 
+### - update summary table & event table based on criteria selections
 @callback(
     Output('detect-table', 'rowData'),
     Output('event-table', 'rowData'),
@@ -850,7 +973,7 @@ def update_data(pref, no_span, benz_lvl, benz_str, benz_int, benz_rsq, naph_lvl,
         none_list = either_duration_distr[(either_duration_distr['detect.both']==False) & 
                                           (either_duration_distr['duration'] >= timedelta(hours=no_span))]['end']
 
-    hr_periods = [1, 2, 4, 8, 12, 24]
+    hr_periods = sample_periods ## - defined in PREP DATA section of script
     all_dfs = pd.DataFrame()
     for hr in hr_periods:
         agg_df = summarize_events(hr=hr, none_list=none_list, df=df, benz_lvl=benz_lvl, naph_lvl=naph_lvl)
@@ -903,6 +1026,7 @@ def update_data(pref, no_span, benz_lvl, benz_str, benz_int, benz_rsq, naph_lvl,
 
     return period_n_cnt.to_dict("records"), df_1.to_dict("records")
 
+### - update line graph based on selections
 @callback(
     Output('reading-graph-2', 'figure'),
     Input('event-table', 'cellClicked'),
@@ -911,34 +1035,47 @@ def update_data(pref, no_span, benz_lvl, benz_str, benz_int, benz_rsq, naph_lvl,
     Input('sample-period-dropdown', 'value')
 )
 def update_graph(cell_clicked, period, pre_time, post_time):
-    df = merged_df.copy()
-
+    
     ## - for line chart: show all events in time period
+    df = merged_df.copy()
     max_y = max(df["ug/m3.benzene"].max(), df["ug/m3.naphthalene"].max()) + 100
     plot_df = df[df['period'] == period].copy().reset_index()
+    avg_benz = plot_df["ug/m3.benzene"].fillna(0).mean()
+    avg_naph = plot_df["ug/m3.naphthalene"].fillna(0).mean()
+
     fig = px.line(plot_df, x="datetime", y=["ug/m3.benzene", "ug/m3.naphthalene"], range_y=[0, max_y], labels={"value": "ug/m3"})
     fig.update_traces(name="Benzene", selector={"name": "ug/m3.benzene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
     fig.update_traces(name="Naphthalene", selector={"name": "ug/m3.naphthalene"}, hovertemplate="%{x} | <b>%{y} ug/m3<b>")
 
+    fig.add_hline(
+        y=avg_benz,
+        line_dash="dash",
+        line_color="rgba(0, 0, 255, 0.75)",
+        #annotation_text=f"Benzene avg: {avg_benz:.2f}",
+        #annotation_position="top right",
+    )
+    fig.add_hline(
+        y=avg_naph,
+        line_dash="dash",
+        line_color="rgba(255, 0, 0, 0.75)",
+        #annotation_text=f"Naphthalene avg: {avg_naph:.2f}",
+        #annotation_position="top right",
+    )
+    
     fig.update_layout(
         legend=dict(
-            orientation="h",  # Make the legend horizontal
-            yanchor="bottom",  # Anchor the bottom of the legend
-            y=1.02,  # Position slightly above the top of the plot
-            xanchor="center",  # Center the legend horizontally
-            x=0.5,  # Place it in the middle of the x-axis
+            orientation="h",  
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="center", 
+            x=0.5, 
         )
     )
     
-    # If a cell is clicked, focus the graph on that date
+    ## - if cell in event table is clicked, focus the graph on that date
     if cell_clicked:
-        # Extract the date value from the clicked row
         selected_date = pd.to_datetime(cell_clicked["value"])
-        
-        # Add a visual anchor (vertical dashed line) at the selected date
         fig.add_vline(x=selected_date, line_width=2, line_dash="dash", line_color="darkgray")
-        
-        # Center the x-axis view around the selected date (optional padding)
         fig.update_layout(
             xaxis_range=[
                 pd.to_datetime(selected_date) - pd.Timedelta(hours=pre_time),
@@ -948,9 +1085,22 @@ def update_graph(cell_clicked, period, pre_time, post_time):
         
     return fig
 
+### - export event table data as CSV file 
+@callback(
+    Output("event-table", "exportDataAsCsv"),
+    Input("btn-export", "n_clicks"),
+    prevent_initial_call=True
+)
+def export(n):
+    if n > 0:
+        return True
+    return False
+
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(debug=True)
+    #app.run(host="0.0.0.0", port=port, debug=False)
 
 # %%
