@@ -223,8 +223,8 @@ def calculate_events(df, type):
 
         'ug/m3.benzene_count' : 'detect_benzene_sum',
         'ug/m3.benzene_min'   : 'ug/m3_benzene_min', 
-        'ug/m3.benzene_max'   : 'Max benzene level (ug/m3)', 
-        'ug/m3.benzene_mean'  : 'Mean benzene level (ug/m3)',
+        'ug/m3.benzene_max'   : 'ug/m3_benzene_max', 
+        'ug/m3.benzene_mean'  : 'ug/m3_benzene_mean',
 
         'ug/m3.naphthalene_count' : 'detect_naphthalene_sum',
         'ug/m3.naphthalene_min'   : 'ug/m3_naphthalene_min', 
