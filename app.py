@@ -97,6 +97,9 @@ v1_event_tbl_cols = [
             {"field": "duration", "headerName": "Duration (min)"},             
             {"field": "datetime_min", "headerName": "Start"},
             {"field": "datetime_max", "headerName": "End"},
+
+            {"field": "time_since_last", "headerName": "Since Last (min)"},
+            {"field": "time_until_next", "headerName": "Until Next (min)"},
         ],
     },
     {
@@ -200,6 +203,12 @@ def calculate_events(df, type):
          f'{type}_event_start', 
          f'{type}_event_end']).agg(aggregate_details)
     events_summary.reset_index(inplace=True)
+    events_summary.sort_values(by=f'{type}_event_start', inplace=True)
+    events_summary[f'{type}_time_since_last'] = events_summary[f'{type}_event_start'] - events_summary[f'{type}_event_end'].shift(1)
+    events_summary[f'{type}_time_since_last'] = events_summary[f'{type}_time_since_last'].dt.total_seconds() / 60
+
+    events_summary[f'{type}_time_until_next'] = events_summary[f'{type}_event_start'].shift(-1) - events_summary[f'{type}_event_end']
+    events_summary[f'{type}_time_until_next'] = events_summary[f'{type}_time_until_next'].dt.total_seconds() / 60
 
     n_events = events_summary.groupby('period').agg(
         {(block_nm, ''): ['count'], 
@@ -220,6 +229,9 @@ def calculate_events(df, type):
         f'{type}_event_start_'    : 'datetime_min', 
         f'{type}_event_end_'      : 'datetime_max', 
         f'{type}_event_duration_' : 'duration',
+
+        f'{type}_time_since_last_' : 'time_since_last',
+        f'{type}_time_until_next_' : 'time_until_next',
 
         'ug/m3.benzene_count' : 'detect_benzene_sum',
         'ug/m3.benzene_min'   : 'ug/m3_benzene_min', 
@@ -490,14 +502,20 @@ app.layout = dbc.Container([
                     ], style={"padding-left": "30px", "padding-right": "50px"}),
                 ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
                 dbc.Col([
-                    html.H5("Number of Events by Time Period"),
-                    dag.AgGrid(
-                        id="sum-table",
-                        columnDefs=v1_n_events_tbl_cols,
-                        rowData=pd.DataFrame().to_dict("records"), 
-                        columnSize="sizeToFit",
-                        dashGridOptions={"resizable": True, "sortable": True}
-                    ),
+                    dbc.Row([
+                        html.H5("Number of Events by Time Period"),
+                        dag.AgGrid(
+                            id="sum-table",
+                            columnDefs=v1_n_events_tbl_cols,
+                            rowData=pd.DataFrame().to_dict("records"), 
+                            columnSize="sizeToFit",
+                            dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
+                        ),
+                    ]),
+                    dbc.Row([
+                        html.Div('Click on a time period in table to see duration distribution'),
+                        dcc.Graph(id='histo-graph'),
+                    ]),
                 ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
             ], className="g-3"),
 
@@ -515,13 +533,17 @@ app.layout = dbc.Container([
                 ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
                 dbc.Col([
                     html.H5("Event Details"),
-                    html.Div('Click on a start date in table to jump to date in graph'),
+                    dbc.Row([
+                        html.Div('Click on a start date in table to jump to date in graph'),
+                        dbc.Col([html.Button("Export data to csv", id="btn-export", n_clicks=0)], width=2),
+                    ]),
                     dag.AgGrid(
                         id="event-table",
                         columnDefs=v1_event_tbl_cols,
                         rowData=pd.DataFrame().to_dict("records"), 
                         columnSize="autoSize",
-                        dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"}
+                        dashGridOptions={"resizable": True, "sortable": True, "rowSelection": "single"},
+                        csvExportParams={"fileName": "events.csv"}
                     ),
                 ], width=6, className="shadow-sm p-3 mb-5 bg-white rounded"),
             ]),
@@ -760,7 +782,7 @@ app.layout = dbc.Container([
                         dbc.Row([]),
                         dbc.Row([
                             dbc.Col([html.Div('Click on a start date in table to jump to date in graph')]),
-                            dbc.Col([html.Button("Export data to csv", id="btn-export", n_clicks=0)], width=2),
+                            dbc.Col([html.Button("Export data to csv", id="btn-export-2", n_clicks=0)], width=2),
                         ]),
                         dag.AgGrid(
                             id="event-table-2",
@@ -809,6 +831,7 @@ def sync_criteria(sync_check, benz_strength_slider, benz_intg_slider, benz_rsq_s
 ### - update summary table, line graph, & benzene/naphthalene event tables based on criteria selections
 @callback(
     Output('sum-table', 'rowData'),
+    Output('histo-graph', 'figure'),
     Output('reading-graph', 'figure'),
     Output('event-table', 'rowData'),
     Input('period-dropdown', 'value'),
@@ -822,8 +845,9 @@ def sync_criteria(sync_check, benz_strength_slider, benz_intg_slider, benz_rsq_s
     Input('naph-lvl', 'value'),
     Input('criteria-preference', 'value'),
     Input('event-table', 'cellClicked'),
+    Input('sum-table', 'cellClicked'),
 )
-def update_data(period, ben_strength, ben_int_time, ben_r_sq, ben_level_val, naph_strength, naph_int_time, naph_r_sq, naph_level_val, criteria_pref, tbl_select):
+def update_data(period, ben_strength, ben_int_time, ben_r_sq, ben_level_val, naph_strength, naph_int_time, naph_r_sq, naph_level_val, criteria_pref, tbl_select, sum_select):
 
     ## - IDENTIFYING EVENTS IN THE DATA
     df = merged_df.copy()
@@ -870,6 +894,21 @@ def update_data(period, ben_strength, ben_int_time, ben_r_sq, ben_level_val, nap
     nevents = all_nevents.to_dict("records")
     event_details = all_summary.to_dict("records")
 
+    ## - PLOTTING HISTOGRAM OF EVENT DURATIONS
+    if sum_select:
+        hist_df = df[df['period'] == period].copy().reset_index()
+        hist = px.histogram(hist_df, x="overall_event_duration", title="Duration Distribution")
+        hist.update_traces(xbins=dict(start=hist_df["overall_event_duration"].min(), end=hist_df["overall_event_duration"].max(), size=10), autobinx=False)
+    else:
+        hist = px.histogram(df, x="overall_event_duration", title="Duration Distribution")
+        hist.update_traces(xbins=dict(start=df["overall_event_duration"].min(), end=df["overall_event_duration"].max(), size=10), autobinx=False)
+
+    hist.update_traces(hovertemplate="%{x} minutes | <b>%{y} events")
+    hist.update_layout(
+        xaxis_title="Duration (min)",
+        yaxis_title="Number of Events",
+    )
+
     ## - PLOTTING EVENTS IN THE TIME PERIOD
     ## - for line chart: show all events in time period
     max_y = max(df["ug/m3.benzene"].max(), df["ug/m3.naphthalene"].max()) + 100
@@ -912,7 +951,19 @@ def update_data(period, ben_strength, ben_int_time, ben_r_sq, ben_level_val, nap
             ]
         )
 
-    return nevents, fig, event_details
+    return nevents, hist, fig, event_details
+
+
+### - export event table data as CSV file 
+@callback(
+    Output("event-table", "exportDataAsCsv"),
+    Input("btn-export", "n_clicks"),
+    prevent_initial_call=True
+)
+def export(n):
+    if n > 0:
+        return True
+    return False
 
 
 ## === Callbacks & functions for tab V2 ===========================================
@@ -1094,7 +1145,7 @@ def update_graph(cell_clicked, period, pre_time, post_time):
 ### - export event table data as CSV file 
 @callback(
     Output("event-table-2", "exportDataAsCsv"),
-    Input("btn-export", "n_clicks"),
+    Input("btn-export-2", "n_clicks"),
     prevent_initial_call=True
 )
 def export(n):
